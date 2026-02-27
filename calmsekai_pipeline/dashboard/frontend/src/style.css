@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #app {
+    @apply h-full bg-sekai-bg text-sekai-text font-sans;
+  }
+
+  * {
+    @apply border-sekai-border;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-sekai-bg; }
+  ::-webkit-scrollbar-thumb { @apply bg-sekai-muted rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-sekai-accent; }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer;
+  }
+  .btn-primary {
+    @apply btn bg-sekai-accent text-sekai-bg hover:bg-sekai-glow;
+  }
+  .btn-ghost {
+    @apply btn border border-sekai-border text-sekai-text hover:border-sekai-accent hover:text-sekai-accent;
+  }
+  .btn-danger {
+    @apply btn border border-sekai-error text-sekai-error hover:bg-sekai-error hover:text-white;
+  }
+  .btn-success {
+    @apply btn bg-sekai-success text-white hover:opacity-90;
+  }
+  .card {
+    @apply bg-sekai-card rounded-xl border border-sekai-border p-5;
+  }
+  .label {
+    @apply text-xs font-medium text-sekai-subtle uppercase tracking-wider;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-pending    { @apply badge bg-sekai-muted/30 text-sekai-subtle; }
+  .badge-approved   { @apply badge bg-sekai-accent/20 text-sekai-accent; }
+  .badge-running    { @apply badge bg-sekai-warning/20 text-sekai-warning animate-pulse-slow; }
+  .badge-done       { @apply badge bg-sekai-success/20 text-sekai-success; }
+  .badge-error      { @apply badge bg-sekai-error/20 text-sekai-error; }
+  .badge-uploaded   { @apply badge bg-sekai-success/30 text-sekai-success; }
+  .badge-rejected   { @apply badge bg-sekai-error/20 text-sekai-error; }
+  .input {
+    @apply bg-sekai-surface border border-sekai-border rounded-lg px-3 py-2 text-sm text-sekai-text
+           placeholder-sekai-subtle focus:outline-none focus:border-sekai-accent transition-colors w-full;
+  }
+  .textarea {
+    @apply input resize-none;
+  }
+}

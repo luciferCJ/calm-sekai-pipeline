@@ -1,0 +1,27 @@
+# CalmSekai Pipeline — Python dependencies
+
+# Core
+python-dotenv>=1.0.0
+
+# OpenAI (DALL-E 3 + GPT-4o)
+openai>=1.30.0
+
+# Fal.ai (image generation fallback)
+fal-client>=0.4.0
+
+# HTTP / async
+httpx>=0.27.0
+aiofiles>=23.2.1
+
+# FastAPI dashboard backend
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9   # for file upload endpoints
+
+# YouTube upload
+google-api-python-client>=2.130.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# Utilities
+requests>=2.32.0
