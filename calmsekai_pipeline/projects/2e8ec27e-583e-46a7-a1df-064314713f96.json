@@ -1,0 +1,18 @@
+{
+  "id": "2e8ec27e-583e-46a7-a1df-064314713f96",
+  "title": "Whispers of the Past",
+  "theme": "Lost Spirits / Wandering Souls",
+  "emotion": "gentle nostalgia",
+  "aspect_ratio": "9:16",
+  "target_duration": 30,
+  "audio_mood": "60 BPM, soft piano, ethereal choir, no percussion",
+  "status": "assembly_done",
+  "scene_ids": [
+    "d514e290-98a0-4be3-af91-e22ca81008f5",
+    "f17a376d-5cef-4b49-85a6-2854bbb12a60",
+    "e73f6c03-b86c-4efb-acdb-2d327888b98b",
+    "00f51c8d-5ede-4381-9db0-d6d09f84089d"
+  ],
+  "created_at": "2026-02-27T08:23:55.208581+00:00",
+  "updated_at": "2026-02-27T08:28:37.361505+00:00"
+}

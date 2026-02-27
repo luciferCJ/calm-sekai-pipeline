@@ -8,6 +8,7 @@ import { computed } from 'vue'
 const props = defineProps({ status: String })
 
 const STATUS_MAP = {
+  // Concept statuses
   pending_approval: { cls: 'badge-pending',  label: 'Pending'       },
   approved:         { cls: 'badge-approved', label: 'Approved'      },
   rejected:         { cls: 'badge-rejected', label: 'Rejected'      },
@@ -16,6 +17,10 @@ const STATUS_MAP = {
   assembly_done:    { cls: 'badge-done',     label: 'Assembled'     },
   seo_done:         { cls: 'badge-done',     label: 'SEO done'      },
   uploaded:         { cls: 'badge-uploaded', label: 'Uploaded ✓'    },
+  // Project / scene statuses
+  draft:            { cls: 'badge-pending',  label: 'Draft'         },
+  in_progress:      { cls: 'badge-approved', label: 'In progress'   },
+  pending:          { cls: 'badge-pending',  label: 'Pending'       },
 }
 
 const badgeClass = computed(() => STATUS_MAP[props.status]?.cls ?? 'badge-pending')

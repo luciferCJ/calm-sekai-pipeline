@@ -27,6 +27,7 @@
 
 <script setup>
 const nav = [
+  { to: '/projects', label: 'Projects' },
   { to: '/concepts', label: 'Concepts' },
   { to: '/history',  label: 'History'  },
 ]

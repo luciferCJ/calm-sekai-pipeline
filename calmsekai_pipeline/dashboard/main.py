@@ -13,6 +13,8 @@ Or directly:
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -173,6 +175,34 @@ class ConceptUpdateRequest(BaseModel):
 
 class PromptUpdateRequest(BaseModel):
     prompt: str   # new system prompt, or "" to reset to default
+
+
+class GenerateProjectRequest(BaseModel):
+    title:           str
+    theme:           str
+    emotion:         str
+    aspect_ratio:    str = "9:16"    # "9:16" | "16:9" | "1:1"
+    target_duration: int = 30        # seconds
+
+
+class ProjectUpdateRequest(BaseModel):
+    title:      Optional[str] = None
+    audio_mood: Optional[str] = None
+    theme:      Optional[str] = None
+    emotion:    Optional[str] = None
+
+
+class SceneUpdateRequest(BaseModel):
+    description:              Optional[str] = None
+    image_prompt:             Optional[str] = None
+    video_motion_instruction: Optional[str] = None
+    duration:                 Optional[int] = None
+    order:                    Optional[int] = None
+
+
+class ProjectAssembleRequest(BaseModel):
+    audio_path:     str
+    breathing_zoom: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +633,323 @@ def list_audio_files(folder: str):
     ]
 
     return {"folder": str(folder_path), "files": files}
+
+
+# ===========================================================================
+# API Routes — Projects
+# ===========================================================================
+
+def _require_project(project_id: str) -> dict:
+    """Load project or raise 404."""
+    from project import load_project
+    try:
+        return load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+
+def _require_scene(scene_id: str) -> dict:
+    """Load scene or raise 404."""
+    from project import load_scene
+    try:
+        return load_scene(scene_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Scene not found: {scene_id}")
+
+
+@app.get("/api/projects")
+def list_projects_route():
+    """Return all projects sorted newest first."""
+    from project import list_projects
+    return list_projects()
+
+
+@app.post("/api/projects/generate", status_code=201)
+def generate_project_route(body: GenerateProjectRequest):
+    """
+    Generate a multi-scene project via GPT-4o.
+    Returns the project dict with a nested 'scenes' list (not yet persisted — UI gets them).
+    Also saves all scenes to concepts/ and the project to projects/.
+    """
+    from project import generate_project, save_project, save_scene
+    try:
+        project = generate_project(
+            title=body.title,
+            theme=body.theme,
+            emotion=body.emotion,
+            aspect_ratio=body.aspect_ratio,
+            target_duration=body.target_duration,
+        )
+        # Save all scenes first
+        scenes = project.pop("_scenes", [])
+        for scene in scenes:
+            save_scene(scene)
+        # Save the project
+        save_project(project)
+        # Attach scenes to response
+        project["scenes"] = scenes
+        return project
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/projects/{project_id}")
+def get_project_route(project_id: str):
+    """Return a project with its full scenes list."""
+    from project import get_project_with_scenes
+    try:
+        return get_project_with_scenes(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+
+@app.patch("/api/projects/{project_id}")
+def update_project_route(project_id: str, body: ProjectUpdateRequest):
+    """Update editable project fields (title, audio_mood, theme, emotion)."""
+    _require_project(project_id)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields provided.")
+    from project import update_project_fields
+    try:
+        return update_project_fields(project_id, fields)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/projects/{project_id}/scenes", status_code=201)
+def add_scene_route(project_id: str):
+    """Add a blank scene to the project."""
+    _require_project(project_id)
+    from project import add_scene
+    try:
+        return add_scene(project_id)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/projects/{project_id}/scenes/{scene_id}")
+def update_scene_route(project_id: str, scene_id: str, body: SceneUpdateRequest):
+    """Update editable scene fields."""
+    _require_project(project_id)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields provided.")
+    from project import update_scene_fields
+    try:
+        return update_scene_fields(project_id, scene_id, fields)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/projects/{project_id}/scenes/{scene_id}", status_code=204)
+def delete_scene_route(project_id: str, scene_id: str):
+    """Remove a scene from the project and delete its JSON file."""
+    _require_project(project_id)
+    from project import delete_scene
+    try:
+        delete_scene(project_id, scene_id)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/projects/{project_id}/scenes/{scene_id}/image")
+def serve_scene_image(project_id: str, scene_id: str):
+    """Serve the generated image for a scene."""
+    path = config.IMAGES_DIR / f"{scene_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image not found. Run image generation first.")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/projects/{project_id}/video/final")
+def serve_project_final_video(project_id: str):
+    """Serve the assembled final video for a project."""
+    path = config.FINALS_DIR / f"{project_id}.mp4"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Final video not found. Run assembly first.")
+    return FileResponse(path, media_type="video/mp4")
+
+
+# ===========================================================================
+# API Routes — Project pipeline execution
+# ===========================================================================
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/run/image", status_code=202)
+def run_scene_image_route(project_id: str, scene_id: str):
+    """Start image generation for a single scene in the background."""
+    _require_project(project_id)
+    scene = _require_scene(scene_id)
+    if scene.get("status") not in ("pending", "image_done"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Scene must be pending to generate image. Current: {scene['status']}",
+        )
+    from image_gen import generate_image
+    try:
+        jobs.start(scene_id, "image", generate_image, scene)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"detail": "Scene image generation started", "scene_id": scene_id}
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/run/video", status_code=202)
+def run_scene_video_route(project_id: str, scene_id: str):
+    """Start video generation for a single scene in the background."""
+    _require_project(project_id)
+    scene = _require_scene(scene_id)
+    if scene.get("status") not in ("image_done",):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Image must be done before generating video. Current: {scene['status']}",
+        )
+    from video_gen import generate_video
+    try:
+        jobs.start(scene_id, "video", generate_video, scene)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"detail": "Scene video generation started", "scene_id": scene_id}
+
+
+@app.post("/api/projects/{project_id}/run/assemble", status_code=202)
+def run_project_assemble_route(project_id: str, body: ProjectAssembleRequest):
+    """
+    Stitch all scene videos into one final project video with audio.
+    All scenes must have video_done status.
+    """
+    from project import get_project_with_scenes
+    project = get_project_with_scenes(project_id)
+
+    scenes = project.get("scenes", [])
+    if not scenes:
+        raise HTTPException(status_code=400, detail="Project has no scenes.")
+
+    not_ready = [
+        s["id"] for s in scenes
+        if s.get("status") not in ("video_done", "assembly_done")
+    ]
+    if not_ready:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{len(not_ready)} scene(s) not yet at video_done: {not_ready}",
+        )
+
+    audio = Path(body.audio_path)
+    if not audio.exists():
+        raise HTTPException(status_code=400, detail=f"Audio file not found: {audio}")
+
+    from assembly import assemble_project
+    try:
+        jobs.start(project_id, "assemble", assemble_project, project, audio, body.breathing_zoom)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"detail": "Project assembly started", "project_id": project_id}
+
+
+@app.post("/api/projects/{project_id}/run/seo", status_code=202)
+def run_project_seo_route(project_id: str):
+    """Generate SEO metadata for the assembled project video."""
+    project = _require_project(project_id)
+    if project.get("status") not in ("assembly_done", "seo_done"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project must be assembly_done to run SEO. Current: {project.get('status')}",
+        )
+
+    def _run_project_seo(p: dict) -> None:
+        from seo import generate_seo, save_metadata
+        from project import update_project_status
+        seo_data = generate_seo(p)
+        save_metadata(p, seo_data)
+        update_project_status(p["id"], "seo_done")
+
+    try:
+        jobs.start(project_id, "seo", _run_project_seo, project)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"detail": "Project SEO generation started", "project_id": project_id}
+
+
+@app.post("/api/projects/{project_id}/run/audio", status_code=202)
+def run_project_audio_route(project_id: str):
+    """Generate Suno AI music for a project."""
+    if not config.SUNO_API_KEY:
+        raise HTTPException(status_code=503, detail="SUNO_API_KEY is not configured.")
+
+    project = _require_project(project_id)
+    audio_path = config.AUDIO_DIR / f"{project_id}.mp3"
+
+    def _run_audio(p: dict) -> None:
+        from audio_gen import generate_audio
+        generate_audio(p)
+
+    try:
+        jobs.start(project_id, "audio", _run_audio, project)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {
+        "detail": "Project audio generation started",
+        "project_id": project_id,
+        "audio_path": str(audio_path),
+    }
+
+
+@app.get("/api/projects/{project_id}/audio/info")
+def get_project_audio_info(project_id: str):
+    """Check whether Suno-generated audio exists for this project."""
+    audio_path = config.AUDIO_DIR / f"{project_id}.mp3"
+    if audio_path.exists() and audio_path.stat().st_size > 0:
+        return {
+            "exists":  True,
+            "path":    str(audio_path),
+            "name":    audio_path.name,
+            "size_kb": round(audio_path.stat().st_size / 1024, 1),
+        }
+    return {"exists": False, "path": None, "name": None, "size_kb": None}
+
+
+@app.post("/api/projects/{project_id}/upload", status_code=202)
+def upload_project_route(project_id: str):
+    """Upload the assembled project video to YouTube."""
+    project = _require_project(project_id)
+    if project.get("status") not in ("seo_done", "assembly_done"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project must be seo_done or assembly_done to upload. Current: {project.get('status')}",
+        )
+
+    def _run_upload(p: dict) -> None:
+        from upload import upload_video
+        from project import update_project_status
+        upload_video(p)
+        update_project_status(p["id"], "uploaded")
+
+    try:
+        jobs.start(project_id, "upload", _run_upload, project)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"detail": "Project upload started", "project_id": project_id}
+
+
+@app.get("/api/projects/{project_id}/metadata")
+def get_project_metadata_route(project_id: str):
+    """Return saved SEO metadata for a project."""
+    from seo import load_metadata
+    try:
+        return load_metadata(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Metadata not found. Run SEO generation first.")
+
+
+@app.patch("/api/projects/{project_id}/metadata")
+def update_project_metadata_route(project_id: str, body: MetadataUpdateRequest):
+    """Update a single SEO metadata field for a project."""
+    from seo import update_metadata_field
+    try:
+        update_metadata_field(project_id, body.field, body.value)
+        return {"detail": f"Field '{body.field}' updated"}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Metadata not found.")
 
 
 # ===========================================================================

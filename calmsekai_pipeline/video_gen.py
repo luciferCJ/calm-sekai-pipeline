@@ -85,6 +85,8 @@ class BaseVideoAdapter(ABC):
         image_path: Path,
         motion_instruction: str,
         concept_id: str,
+        aspect_ratio: str = "9:16",
+        duration: int = 10,
     ) -> Path:
         """
         Generate a video from a source image.
@@ -126,6 +128,8 @@ class GrokVideoAdapter(BaseVideoAdapter):
         self,
         image_data_uri: str,
         prompt: str,
+        aspect_ratio: str = "9:16",
+        duration: int = 10,
     ) -> str:
         """
         Submit a video generation job.
@@ -141,8 +145,8 @@ class GrokVideoAdapter(BaseVideoAdapter):
             "model":        self._MODEL,
             "prompt":       prompt,
             "image_url":    image_data_uri,
-            "duration":     config.VIDEO_DURATION,       # 10 seconds
-            "aspect_ratio": config.VIDEO_ASPECT_SHORTS,  # "9:16"
+            "duration":     duration,
+            "aspect_ratio": aspect_ratio,
             "resolution":   config.VIDEO_RESOLUTION,     # "720p"
         }
 
@@ -219,6 +223,8 @@ class GrokVideoAdapter(BaseVideoAdapter):
         image_path: Path,
         motion_instruction: str,
         concept_id: str,
+        aspect_ratio: str = "9:16",
+        duration: int = 10,
     ) -> Path:
         if not config.XAI_API_KEY:
             raise RuntimeError("XAI_API_KEY is not set.")
@@ -226,12 +232,14 @@ class GrokVideoAdapter(BaseVideoAdapter):
             raise FileNotFoundError(f"Source image not found: {image_path}")
 
         logger.info(
-            "[Grok] Starting image→video for concept %s  image=%s",
-            concept_id, image_path.name,
+            "[Grok] Starting image→video for concept %s  image=%s  ar=%s  dur=%ds",
+            concept_id, image_path.name, aspect_ratio, duration,
         )
 
         image_data_uri = _image_to_data_uri(image_path)
-        request_id     = self._submit_job(image_data_uri, motion_instruction)
+        request_id     = self._submit_job(
+            image_data_uri, motion_instruction, aspect_ratio, duration
+        )
         video_url      = self._poll_job(request_id)
 
         dest = config.VIDEOS_DIR / f"{concept_id}.mp4"
@@ -257,6 +265,8 @@ class RunwayVideoAdapter(BaseVideoAdapter):
         image_path: Path,
         motion_instruction: str,
         concept_id: str,
+        aspect_ratio: str = "9:16",
+        duration: int = 10,
     ) -> Path:
         raise NotImplementedError(
             "Runway ML adapter is not yet implemented. "
@@ -283,6 +293,8 @@ class KlingVideoAdapter(BaseVideoAdapter):
         image_path: Path,
         motion_instruction: str,
         concept_id: str,
+        aspect_ratio: str = "9:16",
+        duration: int = 10,
     ) -> Path:
         raise NotImplementedError(
             "Kling AI adapter is not yet implemented. "
@@ -327,6 +339,10 @@ def generate_video(concept: dict) -> Path:
     """
     concept_id         = concept["id"]
     motion_instruction = concept.get("video_motion_instruction", "")
+    aspect_ratio       = concept.get("aspect_ratio", "9:16")
+    ar_cfg             = config.ASPECT_RATIO_CONFIG.get(aspect_ratio, config.ASPECT_RATIO_CONFIG["9:16"])
+    video_aspect       = ar_cfg["video_aspect"]
+    duration           = int(concept.get("duration", config.VIDEO_DURATION))
 
     if not motion_instruction:
         raise ValueError(f"Concept {concept_id} has no video_motion_instruction.")
@@ -355,7 +371,7 @@ def generate_video(concept: dict) -> Path:
                 "Video generation attempt %d/%d — provider=%s  concept=%s",
                 attempt, config.API_MAX_RETRIES, provider_key, concept_id,
             )
-            path = adapter.generate(image_path, motion_instruction, concept_id)
+            path = adapter.generate(image_path, motion_instruction, concept_id, video_aspect, duration)
             update_concept_status(concept_id, "video_done")
             logger.info("Video generation complete — %s", path.name)
             return path

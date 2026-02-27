@@ -72,7 +72,7 @@ def _download_image(url: str, dest: Path) -> Path:
 # Provider: DALL-E 3
 # ---------------------------------------------------------------------------
 
-def _generate_dalle3(prompt: str, concept_id: str) -> Path:
+def _generate_dalle3(prompt: str, concept_id: str, aspect_ratio: str = "9:16") -> Path:
     """
     Generate one image with DALL-E 3 and save it to images/{concept_id}.png.
 
@@ -96,11 +96,14 @@ def _generate_dalle3(prompt: str, concept_id: str) -> Path:
     logger.info("[DALL-E 3] Generating image for concept %s", concept_id)
     logger.debug("[DALL-E 3] Prompt: %s", full_prompt[:120])
 
+    ar_cfg   = config.ASPECT_RATIO_CONFIG.get(aspect_ratio, config.ASPECT_RATIO_CONFIG["9:16"])
+    img_size = ar_cfg["image_size"]
+
     response = client.images.generate(
         model="dall-e-3",
         prompt=full_prompt,
         n=1,
-        size=config.IMAGE_SIZE_SHORTS,   # "1024x1792" — 9:16 portrait
+        size=img_size,
         quality="hd",
         style="natural",                 # less vivid, more painterly/realistic
         response_format="url",
@@ -118,7 +121,7 @@ def _generate_dalle3(prompt: str, concept_id: str) -> Path:
 # Provider: Fal.ai (flux-lora + anime LoRA)
 # ---------------------------------------------------------------------------
 
-def _generate_falai(prompt: str, concept_id: str) -> Path:
+def _generate_falai(prompt: str, concept_id: str, aspect_ratio: str = "9:16") -> Path:
     """
     Generate one image with fal.ai (flux-lora + anime LoRA) and save it
     to images/{concept_id}.png.
@@ -148,6 +151,9 @@ def _generate_falai(prompt: str, concept_id: str) -> Path:
     logger.info("[Fal.ai] Generating image for concept %s", concept_id)
     logger.debug("[Fal.ai] Prompt: %s", full_prompt[:120])
 
+    ar_cfg   = config.ASPECT_RATIO_CONFIG.get(aspect_ratio, config.ASPECT_RATIO_CONFIG["9:16"])
+    fal_size = ar_cfg["fal_image_size"]
+
     result = fal_client.subscribe(
         config.FAL_ANIME_MODEL,          # default: "fal-ai/flux-lora"
         arguments={
@@ -159,7 +165,7 @@ def _generate_falai(prompt: str, concept_id: str) -> Path:
                 }
             ],
             "num_images": 1,
-            "image_size": "portrait_16_9",   # closest to 9:16
+            "image_size": fal_size,
             "num_inference_steps": 28,
             "guidance_scale": 3.5,
             "output_format": "png",
@@ -211,8 +217,9 @@ def generate_image(concept: dict) -> Path:
     Raises:
         RuntimeError: If both primary and fallback providers fail entirely.
     """
-    concept_id = concept["id"]
-    prompt     = concept.get("image_prompt", "")
+    concept_id   = concept["id"]
+    prompt       = concept.get("image_prompt", "")
+    aspect_ratio = concept.get("aspect_ratio", "9:16")
 
     if not prompt:
         raise ValueError(f"Concept {concept_id} has no image_prompt.")
@@ -221,7 +228,7 @@ def generate_image(concept: dict) -> Path:
     fallback_key = _FALLBACK.get(primary_key)
 
     # Try primary provider with retries
-    primary_path = _try_provider(primary_key, prompt, concept_id)
+    primary_path = _try_provider(primary_key, prompt, concept_id, aspect_ratio)
     if primary_path:
         update_concept_status(concept_id, "image_done")
         return primary_path
@@ -232,7 +239,7 @@ def generate_image(concept: dict) -> Path:
             "Primary image provider '%s' failed. Attempting fallback '%s'.",
             primary_key, fallback_key,
         )
-        fallback_path = _try_provider(fallback_key, prompt, concept_id)
+        fallback_path = _try_provider(fallback_key, prompt, concept_id, aspect_ratio)
         if fallback_path:
             update_concept_status(concept_id, "image_done")
             return fallback_path
@@ -247,6 +254,7 @@ def _try_provider(
     provider_key: str,
     prompt: str,
     concept_id: str,
+    aspect_ratio: str = "9:16",
 ) -> Optional[Path]:
     """
     Attempt image generation with a named provider, retrying on failure.
@@ -265,7 +273,7 @@ def _try_provider(
                 "[%s] Attempt %d/%d — concept %s",
                 provider_key, attempt, config.API_MAX_RETRIES, concept_id,
             )
-            path = fn(prompt, concept_id)
+            path = fn(prompt, concept_id, aspect_ratio)
             logger.info("[%s] Success — %s", provider_key, path.name)
             return path
 

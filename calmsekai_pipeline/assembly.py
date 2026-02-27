@@ -11,6 +11,7 @@ Public entry point:
 """
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import config
@@ -325,6 +326,172 @@ def assemble(
     )
 
     update_concept_status(concept_id, "assembly_done")
+    return output
+
+
+# ---------------------------------------------------------------------------
+# Multi-scene project assembly
+# ---------------------------------------------------------------------------
+
+def assemble_project(
+    project: dict,
+    audio_path: Path,
+    breathing_zoom: bool = True,
+) -> Path:
+    """
+    Stitch all scene videos for a project into one final video with audio.
+
+    Each scene must have a video at videos/{scene_id}.mp4. Scenes are
+    ordered by their 'order' field. The stitched video is saved to
+    finals/{project_id}.mp4.
+
+    Args:
+        project:        Project dict (from load_project / get_project_with_scenes).
+                        Must include 'id', 'aspect_ratio', and 'scenes' list.
+        audio_path:     Absolute path to the audio file.
+        breathing_zoom: When True, applies 3% breathing zoom to each clip.
+
+    Returns:
+        Path to the final assembled video.
+
+    Raises:
+        FileNotFoundError: If any scene video or the audio file is missing.
+        RuntimeError:      If FFmpeg fails.
+    """
+    from project import update_project_status
+
+    project_id   = project["id"]
+    aspect_ratio = project.get("aspect_ratio", "9:16")
+    ar_cfg       = config.ASPECT_RATIO_CONFIG.get(aspect_ratio, config.ASPECT_RATIO_CONFIG["9:16"])
+    target_w     = ar_cfg["width"]
+    target_h     = ar_cfg["height"]
+
+    scenes = sorted(
+        project.get("scenes", []),
+        key=lambda s: s.get("order", 999),
+    )
+    if not scenes:
+        raise ValueError(f"Project {project_id} has no scenes.")
+
+    audio_path = Path(audio_path)
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    # --- Validate all scene videos exist ---
+    scene_videos: list[Path] = []
+    for scene in scenes:
+        vpath = config.VIDEOS_DIR / f"{scene['id']}.mp4"
+        if not vpath.exists():
+            raise FileNotFoundError(
+                f"Video not found for scene {scene['id']} (order={scene.get('order')}). "
+                "Run video generation for all scenes first."
+            )
+        scene_videos.append(vpath)
+
+    logger.info(
+        "Assembling project %s — %d scenes  ar=%s  audio=%s",
+        project_id, len(scenes), aspect_ratio, audio_path.name,
+    )
+
+    # Use a temp dir for intermediate files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        norm_clips: list[Path] = []
+
+        # --- Pass 1: normalize each clip to target resolution + fps ---
+        for i, (scene, vpath) in enumerate(zip(scenes, scene_videos)):
+            norm_out = tmp / f"norm_{i:03d}.mp4"
+
+            if breathing_zoom:
+                scale_w = int(target_w * ZOOM_SCALE) + 1
+                scale_h = int(target_h * ZOOM_SCALE) + 1
+            else:
+                scale_w = target_w
+                scale_h = target_h
+
+            norm_cmd = [
+                config.FFMPEG_PATH, "-y",
+                "-i", str(vpath),
+                "-vf", (
+                    f"fps=fps={config.OUTPUT_FPS},"
+                    f"scale={scale_w}:{scale_h}:force_original_aspect_ratio=increase,"
+                    f"crop={target_w}:{target_h}"
+                ),
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-an",   # strip audio from individual clips
+                str(norm_out),
+            ]
+            _run_ffmpeg(norm_cmd)
+            norm_clips.append(norm_out)
+
+        # --- Pass 2: concat normalized clips ---
+        concat_list = tmp / "concat_list.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p}'" for p in norm_clips),
+            encoding="utf-8",
+        )
+
+        concat_out = tmp / "concat.mp4"
+        concat_cmd = [
+            config.FFMPEG_PATH, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list),
+            "-c", "copy",
+            str(concat_out),
+        ]
+        _run_ffmpeg(concat_cmd)
+
+        # --- Pass 3: add audio, fades, final encode ---
+        total_duration = _get_video_duration(concat_out)
+        a_fade_out     = max(0.0, total_duration - AUDIO_FADE_S)
+        v_fade_out     = max(0.0, total_duration - VIDEO_FADE_S)
+
+        filter_complex = (
+            f"[0:v]"
+            f"fade=t=in:st=0:d={VIDEO_FADE_S},"
+            f"fade=t=out:st={v_fade_out:.3f}:d={VIDEO_FADE_S}"
+            f"[vout];"
+            f"[1:a]"
+            f"atrim=0:{total_duration:.3f},"
+            f"asetpts=PTS-STARTPTS,"
+            f"afade=t=in:st=0:d={AUDIO_FADE_S},"
+            f"afade=t=out:st={a_fade_out:.3f}:d={AUDIO_FADE_S}"
+            f"[aout]"
+        )
+
+        output = config.FINALS_DIR / f"{project_id}.mp4"
+        final_cmd = [
+            config.FFMPEG_PATH, "-y",
+            "-i", str(concat_out),
+            "-i", str(audio_path),
+            "-filter_complex", filter_complex,
+            "-map", "[vout]",
+            "-map", "[aout]",
+            "-c:v", "libx264",
+            "-preset", "slow",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-t", f"{total_duration:.3f}",
+            str(output),
+        ]
+        _run_ffmpeg(final_cmd)
+
+    if not output.exists() or output.stat().st_size == 0:
+        raise RuntimeError(
+            f"FFmpeg completed but output file is missing or empty: {output}"
+        )
+
+    size_mb = output.stat().st_size / (1024 * 1024)
+    logger.info("Project assembly complete — %s (%.1f MB)", output.name, size_mb)
+
+    update_project_status(project_id, "assembly_done")
     return output
 
 

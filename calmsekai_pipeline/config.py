@@ -30,10 +30,11 @@ FINALS_DIR   = ROOT_DIR / "finals"
 METADATA_DIR = ROOT_DIR / "metadata"
 UPLOADED_DIR = ROOT_DIR / "uploaded"
 CONCEPTS_DIR = ROOT_DIR / "concepts"
+PROJECTS_DIR = ROOT_DIR / "projects"
 
 # Ensure all directories exist at import time
 for _d in (IMAGES_DIR, VIDEOS_DIR, AUDIO_DIR, FINALS_DIR,
-           METADATA_DIR, UPLOADED_DIR, CONCEPTS_DIR):
+           METADATA_DIR, UPLOADED_DIR, CONCEPTS_DIR, PROJECTS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,31 @@ VIDEO_ASPECT_SHORTS = "9:16"
 VIDEO_ASPECT_WIDE   = "16:9"
 VIDEO_DURATION      = 10           # seconds per clip
 VIDEO_RESOLUTION    = "720p"
+
+# Aspect ratio config — maps ratio key to provider params and FFmpeg dimensions
+ASPECT_RATIO_CONFIG: dict[str, dict] = {
+    "9:16": {
+        "image_size":    "1024x1792",
+        "fal_image_size": "portrait_16_9",
+        "video_aspect":  "9:16",
+        "width":         1080,
+        "height":        1920,
+    },
+    "16:9": {
+        "image_size":    "1792x1024",
+        "fal_image_size": "landscape_16_9",
+        "video_aspect":  "16:9",
+        "width":         1920,
+        "height":        1080,
+    },
+    "1:1": {
+        "image_size":    "1024x1024",
+        "fal_image_size": "square",
+        "video_aspect":  "1:1",
+        "width":         1080,
+        "height":        1080,
+    },
+}
 
 OUTPUT_FPS          = 24
 OUTPUT_FORMAT       = "mp4"        # h264 / aac
